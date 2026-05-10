@@ -28,6 +28,14 @@ if exist ffmpeg.exe (
   echo Put ffmpeg.exe in the dist folder or install FFmpeg on the user's PATH.
 )
 
+if exist ffprobe.exe (
+  copy /Y ffprobe.exe dist\ffprobe.exe >nul
+  echo Copied ffprobe.exe to dist folder.
+) else (
+  echo [WARN] ffprobe.exe was not found beside this script.
+  echo Put ffprobe.exe in the dist folder or install FFmpeg on the user's PATH.
+)
+
 echo.
 echo Done. Application: dist\RuyaluWatermarkTool.exe
 endlocal

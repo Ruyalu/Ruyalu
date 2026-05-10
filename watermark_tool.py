@@ -7,6 +7,7 @@ Only use this script for media you own or have permission to edit.
 from __future__ import annotations
 
 import argparse
+import json
 import shlex
 import shutil
 import subprocess
@@ -51,6 +52,53 @@ def resolve_ffmpeg(dry_run: bool = False) -> str:
     if dry_run:
         return "ffmpeg"
     raise RuntimeError("FFmpeg was not found. Put ffmpeg.exe next to this app or install FFmpeg on PATH.")
+
+
+def resolve_ffprobe(dry_run: bool = False) -> str:
+    """Return the ffprobe executable path for desktop video metadata lookup."""
+
+    executable_name = "ffprobe.exe" if sys.platform.startswith("win") else "ffprobe"
+    ffprobe = shutil.which(executable_name) or shutil.which("ffprobe")
+    if ffprobe is not None:
+        return ffprobe
+
+    app_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+    bundled_ffprobe = app_dir / executable_name
+    if bundled_ffprobe.exists():
+        return str(bundled_ffprobe)
+
+    if dry_run:
+        return "ffprobe"
+    raise RuntimeError("FFprobe was not found. Put ffprobe.exe next to this app or install FFmpeg on PATH.")
+
+
+def get_video_dimensions(input_file: Path) -> tuple[int, int]:
+    """Read the first video stream size using ffprobe."""
+
+    command = [
+        resolve_ffprobe(),
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height",
+        "-of",
+        "json",
+        str(input_file),
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip() or "Could not read video dimensions.")
+    payload = json.loads(completed.stdout)
+    streams = payload.get("streams", [])
+    if not streams:
+        raise RuntimeError("No video stream was found in the selected file.")
+    width = int(streams[0]["width"])
+    height = int(streams[0]["height"])
+    if width <= 0 or height <= 0:
+        raise RuntimeError("Video dimensions are invalid.")
+    return width, height
 
 
 def build_filter(region: Region, mode: str) -> str:

@@ -73,3 +73,18 @@ def test_resolve_ffmpeg_allows_dry_run_without_install(mock_which):
 def test_resolve_ffmpeg_requires_install_for_real_runs(mock_which):
     with pytest.raises(RuntimeError):
         watermark_tool.resolve_ffmpeg(dry_run=False)
+
+
+@patch("watermark_tool.shutil.which", return_value=None)
+def test_resolve_ffprobe_allows_dry_run_without_install(mock_which):
+    assert watermark_tool.resolve_ffprobe(dry_run=True) == "ffprobe"
+
+
+@patch("watermark_tool.resolve_ffprobe", return_value="ffprobe")
+@patch("watermark_tool.subprocess.run")
+def test_get_video_dimensions(mock_run, mock_resolve_ffprobe):
+    mock_run.return_value.returncode = 0
+    mock_run.return_value.stdout = '{"streams": [{"width": 1920, "height": 1080}]}'
+    mock_run.return_value.stderr = ""
+
+    assert watermark_tool.get_video_dimensions(Path("input.mp4")) == (1920, 1080)
