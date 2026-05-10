@@ -40,7 +40,7 @@ class WatermarkDesktopApp(tk.Tk):
         self.y = tk.IntVar(value=0)
         self.width_value = tk.IntVar(value=0)
         self.height_value = tk.IntVar(value=0)
-        self.mode = tk.StringVar(value="delogo")
+        self.mode = tk.StringVar(value="inpaint")
         self.timestamp = tk.StringVar(value="00:00:01")
         self.status = tk.StringVar(value="第 1 步：选择视频。第 2 步：在画面上拖拽框选水印。第 3 步：开始处理。")
 
@@ -149,17 +149,20 @@ class WatermarkDesktopApp(tk.Tk):
         ttk.Entry(frame, textvariable=self.output_path, width=38).grid(row=1, column=0, sticky="ew", padx=8, pady=4)
         ttk.Button(frame, text="保存为...", command=self._choose_output).grid(row=1, column=1, padx=8, pady=4)
 
-        ttk.Radiobutton(frame, text="智能填补（推荐，适合大多数水印）", variable=self.mode, value="delogo").grid(
+        ttk.Radiobutton(frame, text="无痕修复（推荐，减少明显模糊/遮罩）", variable=self.mode, value="inpaint").grid(
             row=2, column=0, columnspan=2, sticky="w", padx=8, pady=3
         )
-        ttk.Radiobutton(frame, text="模糊遮罩（速度快，适合角标/Logo）", variable=self.mode, value="blur").grid(
+        ttk.Radiobutton(frame, text="快速填补（兼容性好）", variable=self.mode, value="delogo").grid(
             row=3, column=0, columnspan=2, sticky="w", padx=8, pady=3
         )
+        ttk.Radiobutton(frame, text="模糊遮罩（最后备选，会有明显遮罩）", variable=self.mode, value="blur").grid(
+            row=4, column=0, columnspan=2, sticky="w", padx=8, pady=3
+        )
         ttk.Button(frame, text="预览水印位置", command=self.preview_selection).grid(
-            row=4, column=0, columnspan=2, sticky="ew", padx=8, pady=(8, 4)
+            row=5, column=0, columnspan=2, sticky="ew", padx=8, pady=(8, 4)
         )
         ttk.Button(frame, text="开始去水印", command=self.remove_watermark).grid(
-            row=5, column=0, columnspan=2, sticky="ew", padx=8, pady=(4, 10)
+            row=6, column=0, columnspan=2, sticky="ew", padx=8, pady=(4, 10)
         )
 
     def _build_log(self, parent: ttk.Frame) -> None:
@@ -443,6 +446,19 @@ class WatermarkDesktopApp(tk.Tk):
         input_file, output_file, region = job
         if output_file is None:
             return
+        if self.mode.get() == "inpaint":
+            command = [
+                "INPAINT",
+                str(input_file),
+                str(output_file),
+                str(region.x),
+                str(region.y),
+                str(region.width),
+                str(region.height),
+            ]
+            self._run_async(command, f"处理完成：{output_file}", inpaint_job=(input_file, output_file, region))
+            return
+
         args = Namespace(
             input=input_file,
             output=output_file,
@@ -459,7 +475,7 @@ class WatermarkDesktopApp(tk.Tk):
         )
         try:
             command = watermark_tool.build_remove_command(args)
-        except RuntimeError as exc:
+        except (RuntimeError, ValueError) as exc:
             messagebox.showerror("无法处理视频", str(exc))
             return
         self._run_async(command, f"处理完成：{output_file}")
@@ -470,11 +486,49 @@ class WatermarkDesktopApp(tk.Tk):
             return True
         return False
 
-    def _run_async(self, command: list[str], success_message: str, open_file: Path | None = None) -> None:
-        self.status.set("正在运行 FFmpeg，请稍候。视频越大耗时越久。")
+    def _run_async(
+        self,
+        command: list[str],
+        success_message: str,
+        open_file: Path | None = None,
+        inpaint_job: tuple[Path, Path, watermark_tool.Region] | None = None,
+    ) -> None:
+        self.status.set("正在处理，请稍候。视频越大耗时越久。")
         self._log("$ " + shlex.join(command))
-        self.worker = threading.Thread(target=self._run_process, args=(command, success_message, open_file), daemon=True)
+        self.worker = threading.Thread(
+            target=self._run_inpaint_process if inpaint_job is not None else self._run_process,
+            args=(inpaint_job, success_message, open_file) if inpaint_job is not None else (command, success_message, open_file),
+            daemon=True,
+        )
         self.worker.start()
+
+    def _run_inpaint_process(
+        self,
+        inpaint_job: tuple[Path, Path, watermark_tool.Region] | None,
+        success_message: str,
+        open_file: Path | None,
+    ) -> None:
+        if inpaint_job is None:
+            self.log_queue.put("__ERROR__无痕修复任务参数无效。")
+            return
+        input_file, output_file, region = inpaint_job
+        try:
+            return_code = watermark_tool.process_video_inpaint(
+                input_file,
+                output_file,
+                region,
+                overwrite=True,
+                progress_callback=self.log_queue.put,
+            )
+        except RuntimeError as exc:
+            self.log_queue.put(f"__ERROR__{exc}")
+            return
+        if return_code == 0:
+            self.log_queue.put(f"__SUCCESS__{success_message}")
+            if open_file is not None:
+                self.log_queue.put(f"__OPEN__{open_file}")
+        else:
+            self.log_queue.put(f"__ERROR__无痕修复失败，退出码：{return_code}")
 
     def _run_process(self, command: list[str], success_message: str, open_file: Path | None) -> None:
         process = subprocess.Popen(

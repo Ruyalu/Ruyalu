@@ -47,6 +47,7 @@ dist\RuyaluWatermarkTool.exe
 
 - Python 3.10+
 - FFmpeg/FFprobe available on your `PATH`，或将 `ffmpeg.exe` 和 `ffprobe.exe` 放在应用/脚本同目录
+- 可选但推荐：`opencv-python` 和 `numpy`，用于“无痕修复”模式，减少明显模糊/遮罩
 
 Check FFmpeg with:
 
@@ -68,11 +69,23 @@ Remove a rectangular watermark region with FFmpeg's `delogo` filter:
 python watermark_tool.py remove input.mp4 output.mp4 --x 20 --y 20 --width 220 --height 80
 ```
 
-Use blur masking instead of delogo:
+Use no-blur OpenCV inpainting mode instead of delogo/blur:
 
 ```bash
-python watermark_tool.py remove input.mp4 output.mp4 --x 20 --y 20 --width 220 --height 80 --mode blur
+python watermark_tool.py remove input.mp4 output.mp4 --x 20 --y 20 --width 220 --height 80 --mode inpaint
 ```
+
+## Reducing blur/overlay artifacts
+
+Traditional `blur` and `delogo` modes can leave a visible soft rectangle. The recommended `inpaint` mode reconstructs the selected area frame-by-frame with OpenCV Telea inpainting, then muxes the original audio back into the output. It is slower, but usually looks more natural on simple backgrounds.
+
+Install the optional dependency when using the Python version:
+
+```bash
+python -m pip install opencv-python numpy
+```
+
+For best results, select the smallest rectangle that fully covers the watermark and add only a tiny margin. Large boxes over complex moving backgrounds can still show artifacts; true commercial “AI” tools use temporal video inpainting models, which are heavier than this local lightweight app.
 
 ## Choosing coordinates
 

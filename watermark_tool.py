@@ -7,13 +7,16 @@ Only use this script for media you own or have permission to edit.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import shlex
 import shutil
 import subprocess
+import tempfile
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 
 @dataclass(frozen=True)
@@ -101,6 +104,107 @@ def get_video_dimensions(input_file: Path) -> tuple[int, int]:
     return width, height
 
 
+def build_audio_mux_command(video_without_audio: Path, original_input: Path, output: Path, overwrite: bool) -> list[str]:
+    """Build an FFmpeg command that copies processed video and original audio."""
+
+    return [
+        resolve_ffmpeg(),
+        "-y" if overwrite else "-n",
+        "-i",
+        str(video_without_audio),
+        "-i",
+        str(original_input),
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a?",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "copy",
+        "-shortest",
+        str(output),
+    ]
+
+
+def process_video_inpaint(
+    input_file: Path,
+    output_file: Path,
+    region: Region,
+    overwrite: bool = False,
+    progress_callback: Callable[[str], None] | None = None,
+) -> int:
+    """Use OpenCV inpainting to remove a watermark region without a blur box."""
+
+    region.validate()
+    if output_file.exists() and not overwrite:
+        raise RuntimeError(f"Output already exists: {output_file}")
+    if importlib.util.find_spec("cv2") is None or importlib.util.find_spec("numpy") is None:
+        raise RuntimeError(
+            "The no-blur inpaint mode requires OpenCV. Install it with: python -m pip install opencv-python numpy"
+        )
+    import cv2  # type: ignore[import-not-found]
+    import numpy as np  # type: ignore[import-not-found]
+
+    def report(message: str) -> None:
+        if progress_callback is not None:
+            progress_callback(message)
+        else:
+            print(message)
+
+    capture = cv2.VideoCapture(str(input_file))
+    if not capture.isOpened():
+        raise RuntimeError(f"Could not open input video: {input_file}")
+
+    fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+    frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    if frame_width <= 0 or frame_height <= 0:
+        capture.release()
+        raise RuntimeError("Could not read video dimensions for inpaint mode.")
+
+    mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
+    x1 = min(max(region.x, 0), frame_width - 1)
+    y1 = min(max(region.y, 0), frame_height - 1)
+    x2 = min(max(region.x + region.width, 1), frame_width)
+    y2 = min(max(region.y + region.height, 1), frame_height)
+    padding = max(2, round(min(region.width, region.height) * 0.08))
+    cv2.rectangle(mask, (x1, y1), (x2 - 1, y2 - 1), 255, -1)
+    kernel = np.ones((padding, padding), np.uint8)
+    mask = cv2.dilate(mask, kernel, iterations=1)
+
+    with tempfile.TemporaryDirectory(prefix="ruyalu_inpaint_") as temp_dir:
+        temp_video = Path(temp_dir) / "inpaint_video.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(temp_video), fourcc, fps, (frame_width, frame_height))
+        if not writer.isOpened():
+            capture.release()
+            raise RuntimeError("Could not create temporary video for inpaint mode.")
+
+        index = 0
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            restored = cv2.inpaint(frame, mask, 3, cv2.INPAINT_TELEA)
+            writer.write(restored)
+            index += 1
+            if index == 1 or index % 30 == 0:
+                total = frame_count if frame_count > 0 else "?"
+                report(f"Inpainting frame {index}/{total}")
+
+        capture.release()
+        writer.release()
+        if index == 0:
+            raise RuntimeError("No frames were read from the input video.")
+
+        mux_command = build_audio_mux_command(temp_video, input_file, output_file, overwrite=True)
+        report("Muxing original audio back into output video...")
+        completed = subprocess.run(mux_command, check=False)
+        return completed.returncode
+
+
 def build_filter(region: Region, mode: str) -> str:
     """Build the FFmpeg video filter for the selected masking mode."""
 
@@ -117,6 +221,8 @@ def build_filter(region: Region, mode: str) -> str:
             "boxblur=12:1[blurred];"
             f"[base][blurred]overlay={region.x}:{region.y}"
         )
+    if mode == "inpaint":
+        raise ValueError("Inpaint mode is processed by OpenCV and does not use an FFmpeg video filter.")
     raise ValueError(f"Unsupported mode: {mode}")
 
 
@@ -214,7 +320,7 @@ def build_parser() -> argparse.ArgumentParser:
     remove.add_argument("input", type=Path, help="Input video path.")
     remove.add_argument("output", type=Path, help="Output video path.")
     add_region_arguments(remove)
-    remove.add_argument("--mode", choices=("delogo", "blur"), default="delogo", help="Masking mode.")
+    remove.add_argument("--mode", choices=("inpaint", "delogo", "blur"), default="inpaint", help="Masking mode.")
     remove.add_argument("--video-codec", default="libx264", help="FFmpeg video codec.")
     remove.add_argument("--crf", type=int, default=20, help="Output quality; lower is higher quality.")
     remove.add_argument("--preset", default="medium", help="Encoder preset.")
@@ -235,6 +341,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "remove":
+            if args.mode == "inpaint":
+                if args.dry_run:
+                    print("OpenCV inpaint mode will process frames, reconstruct the selected area, and mux original audio.")
+                    return 0
+                return process_video_inpaint(
+                    args.input,
+                    args.output,
+                    Region(args.x, args.y, args.width, args.height),
+                    overwrite=args.overwrite,
+                )
             return run_command(build_remove_command(args), args.dry_run)
         if args.command == "preview":
             return run_command(build_preview_command(args), args.dry_run)

@@ -14,7 +14,7 @@ if errorlevel 1 (
   )
 )
 
-%PYTHON_CMD% -m pip install --upgrade pyinstaller
+%PYTHON_CMD% -m pip install --upgrade pyinstaller opencv-python numpy
 if errorlevel 1 exit /b 1
 
 %PYTHON_CMD% -m PyInstaller --onefile --windowed --name RuyaluWatermarkTool watermark_desktop.py

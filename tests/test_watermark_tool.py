@@ -88,3 +88,33 @@ def test_get_video_dimensions(mock_run, mock_resolve_ffprobe):
     mock_run.return_value.stderr = ""
 
     assert watermark_tool.get_video_dimensions(Path("input.mp4")) == (1920, 1080)
+
+
+def test_build_filter_rejects_inpaint_filter_mode():
+    region = watermark_tool.Region(x=10, y=20, width=120, height=60)
+    with pytest.raises(ValueError):
+        watermark_tool.build_filter(region, "inpaint")
+
+
+@patch("watermark_tool.resolve_ffmpeg", return_value="ffmpeg")
+def test_build_audio_mux_command(mock_ffmpeg):
+    assert watermark_tool.build_audio_mux_command(
+        Path("video.mp4"), Path("original.mp4"), Path("output.mp4"), overwrite=True
+    ) == [
+        "ffmpeg",
+        "-y",
+        "-i",
+        "video.mp4",
+        "-i",
+        "original.mp4",
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a?",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "copy",
+        "-shortest",
+        "output.mp4",
+    ]
