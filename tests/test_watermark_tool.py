@@ -62,3 +62,14 @@ def test_build_remove_command(mock_ffmpeg):
         "copy",
         "output.mp4",
     ]
+
+
+@patch("watermark_tool.shutil.which", return_value=None)
+def test_resolve_ffmpeg_allows_dry_run_without_install(mock_which):
+    assert watermark_tool.resolve_ffmpeg(dry_run=True) == "ffmpeg"
+
+
+@patch("watermark_tool.shutil.which", return_value=None)
+def test_resolve_ffmpeg_requires_install_for_real_runs(mock_which):
+    with pytest.raises(RuntimeError):
+        watermark_tool.resolve_ffmpeg(dry_run=False)

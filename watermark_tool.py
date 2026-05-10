@@ -32,14 +32,25 @@ class Region:
 
 
 def resolve_ffmpeg(dry_run: bool = False) -> str:
-    """Return the ffmpeg executable path, allowing dry runs without FFmpeg installed."""
+    """Return the ffmpeg executable path, allowing dry runs without FFmpeg installed.
 
-    ffmpeg = shutil.which("ffmpeg")
+    Windows builds can place ``ffmpeg.exe`` next to the generated application, so
+    this checks both PATH and the folder containing the running script/exe.
+    """
+
+    executable_name = "ffmpeg.exe" if sys.platform.startswith("win") else "ffmpeg"
+    ffmpeg = shutil.which(executable_name) or shutil.which("ffmpeg")
     if ffmpeg is not None:
         return ffmpeg
+
+    app_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+    bundled_ffmpeg = app_dir / executable_name
+    if bundled_ffmpeg.exists():
+        return str(bundled_ffmpeg)
+
     if dry_run:
         return "ffmpeg"
-    raise RuntimeError("FFmpeg was not found on PATH. Install FFmpeg before using this tool.")
+    raise RuntimeError("FFmpeg was not found. Put ffmpeg.exe next to this app or install FFmpeg on PATH.")
 
 
 def build_filter(region: Region, mode: str) -> str:
