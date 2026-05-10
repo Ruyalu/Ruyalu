@@ -77,7 +77,7 @@ python watermark_tool.py remove input.mp4 output.mp4 --x 20 --y 20 --width 220 -
 
 ## Reducing blur/overlay artifacts
 
-Traditional `blur` and `delogo` modes can leave a visible soft rectangle. The recommended `inpaint` mode reconstructs the selected area frame-by-frame with OpenCV Telea inpainting, then muxes the original audio back into the output. It is slower, but usually looks more natural on simple backgrounds.
+Traditional `blur` and `delogo` modes can leave a visible soft rectangle, especially in a bottom-right corner watermark like the example screenshot. The recommended `inpaint` mode now expands the selected repair box slightly, reconstructs the selected area frame-by-frame with OpenCV Telea inpainting, and feather-blends the repaired pixels back into the original frame so the rectangle edge is less obvious. It then muxes the original audio back into the output. It is slower, but usually looks more natural on simple backgrounds.
 
 Install the optional dependency when using the Python version:
 
@@ -85,7 +85,7 @@ Install the optional dependency when using the Python version:
 python -m pip install opencv-python numpy
 ```
 
-For best results, select the smallest rectangle that fully covers the watermark and add only a tiny margin. Large boxes over complex moving backgrounds can still show artifacts; true commercial “AI” tools use temporal video inpainting models, which are heavier than this local lightweight app.
+For best results, select the smallest rectangle that fully covers the watermark or the remaining blur block, and include a tiny margin around the visible edge. If the right-bottom area still has a shadow, run `inpaint` once more on just that remaining shadow. Large boxes over complex moving backgrounds can still show artifacts; true commercial “AI” tools use temporal video inpainting models, which are heavier than this local lightweight app.
 
 ## Choosing coordinates
 

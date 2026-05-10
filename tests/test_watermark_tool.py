@@ -118,3 +118,28 @@ def test_build_audio_mux_command(mock_ffmpeg):
         "-shortest",
         "output.mp4",
     ]
+
+
+def test_build_inpaint_plan_expands_and_feathers_region():
+    plan = watermark_tool.build_inpaint_plan(
+        watermark_tool.Region(x=100, y=50, width=200, height=80), frame_width=640, frame_height=360
+    )
+
+    assert plan.x1 == 97
+    assert plan.y1 == 47
+    assert plan.x2 == 303
+    assert plan.y2 == 133
+    assert plan.feather == 15
+    assert plan.radius == 3
+
+
+def test_build_inpaint_plan_clamps_bottom_right_edge():
+    plan = watermark_tool.build_inpaint_plan(
+        watermark_tool.Region(x=570, y=310, width=80, height=60), frame_width=640, frame_height=360
+    )
+
+    assert plan.x1 == 568
+    assert plan.y1 == 308
+    assert plan.x2 == 640
+    assert plan.y2 == 360
+    assert plan.feather >= 6

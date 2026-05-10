@@ -149,7 +149,7 @@ class WatermarkDesktopApp(tk.Tk):
         ttk.Entry(frame, textvariable=self.output_path, width=38).grid(row=1, column=0, sticky="ew", padx=8, pady=4)
         ttk.Button(frame, text="保存为...", command=self._choose_output).grid(row=1, column=1, padx=8, pady=4)
 
-        ttk.Radiobutton(frame, text="无痕修复（推荐，减少明显模糊/遮罩）", variable=self.mode, value="inpaint").grid(
+        ttk.Radiobutton(frame, text="无痕修复（推荐，可修复右下角残留痕迹）", variable=self.mode, value="inpaint").grid(
             row=2, column=0, columnspan=2, sticky="w", padx=8, pady=3
         )
         ttk.Radiobutton(frame, text="快速填补（兼容性好）", variable=self.mode, value="delogo").grid(

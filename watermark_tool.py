@@ -35,6 +35,38 @@ class Region:
             raise ValueError("width and height must be greater than zero")
 
 
+@dataclass(frozen=True)
+class InpaintPlan:
+    """Pixel bounds and blend settings for less visible inpaint repairs."""
+
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+    feather: int
+    radius: int
+
+
+def build_inpaint_plan(region: Region, frame_width: int, frame_height: int) -> InpaintPlan:
+    """Clamp a region and choose feather/radius values to avoid hard rectangles."""
+
+    region.validate()
+    if frame_width <= 0 or frame_height <= 0:
+        raise ValueError("frame_width and frame_height must be greater than zero")
+
+    margin = max(2, round(min(region.width, region.height) * 0.04))
+    x1 = max(region.x - margin, 0)
+    y1 = max(region.y - margin, 0)
+    x2 = min(region.x + region.width + margin, frame_width)
+    y2 = min(region.y + region.height + margin, frame_height)
+    if x2 <= x1 or y2 <= y1:
+        raise ValueError("selected region does not overlap the video frame")
+
+    feather = max(6, min(32, round(min(x2 - x1, y2 - y1) * 0.18)))
+    radius = max(3, min(9, round(min(x2 - x1, y2 - y1) * 0.035)))
+    return InpaintPlan(x1=x1, y1=y1, x2=x2, y2=y2, feather=feather, radius=radius)
+
+
 def resolve_ffmpeg(dry_run: bool = False) -> str:
     """Return the ffmpeg executable path, allowing dry runs without FFmpeg installed.
 
@@ -164,15 +196,13 @@ def process_video_inpaint(
         capture.release()
         raise RuntimeError("Could not read video dimensions for inpaint mode.")
 
+    plan = build_inpaint_plan(region, frame_width, frame_height)
     mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
-    x1 = min(max(region.x, 0), frame_width - 1)
-    y1 = min(max(region.y, 0), frame_height - 1)
-    x2 = min(max(region.x + region.width, 1), frame_width)
-    y2 = min(max(region.y + region.height, 1), frame_height)
-    padding = max(2, round(min(region.width, region.height) * 0.08))
-    cv2.rectangle(mask, (x1, y1), (x2 - 1, y2 - 1), 255, -1)
-    kernel = np.ones((padding, padding), np.uint8)
-    mask = cv2.dilate(mask, kernel, iterations=1)
+    cv2.rectangle(mask, (plan.x1, plan.y1), (plan.x2 - 1, plan.y2 - 1), 255, -1)
+    alpha = cv2.distanceTransform(mask, cv2.DIST_L2, 3).astype(np.float32)
+    alpha = np.clip(alpha / float(plan.feather), 0.0, 1.0)
+    alpha = cv2.GaussianBlur(alpha, (0, 0), sigmaX=max(1, plan.feather / 2), sigmaY=max(1, plan.feather / 2))
+    alpha = np.clip(alpha, 0.0, 1.0)[:, :, None]
 
     with tempfile.TemporaryDirectory(prefix="ruyalu_inpaint_") as temp_dir:
         temp_video = Path(temp_dir) / "inpaint_video.mp4"
@@ -187,12 +217,13 @@ def process_video_inpaint(
             ok, frame = capture.read()
             if not ok:
                 break
-            restored = cv2.inpaint(frame, mask, 3, cv2.INPAINT_TELEA)
-            writer.write(restored)
+            restored = cv2.inpaint(frame, mask, plan.radius, cv2.INPAINT_TELEA)
+            blended = (restored.astype(np.float32) * alpha + frame.astype(np.float32) * (1.0 - alpha)).astype(np.uint8)
+            writer.write(blended)
             index += 1
             if index == 1 or index % 30 == 0:
                 total = frame_count if frame_count > 0 else "?"
-                report(f"Inpainting frame {index}/{total}")
+                report(f"Inpainting frame {index}/{total} with feather={plan.feather}, radius={plan.radius}")
 
         capture.release()
         writer.release()
